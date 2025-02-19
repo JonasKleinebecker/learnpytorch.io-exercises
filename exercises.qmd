@@ -9,6 +9,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
+from sklearn.datasets import make_moons
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from ml_utils import plot_decision_boundary
 ```
 
 ## PyTorch Exercises 00 pytorch fundamentals
@@ -86,9 +90,9 @@ val_losses = []
 for epoch in range(nun_epochs):
   model_0.train()
   
-  y_pred = model_0(x_train)
+  y_logits = model_0(x_train)
   
-  loss = loss_fn(y_pred, y_train)
+  loss = loss_fn(y_logits, y_train)
 
   optimizer.zero_grad()
 
@@ -99,8 +103,8 @@ for epoch in range(nun_epochs):
   model_0.eval()
   
   with torch.inference_mode():
-    y_val_pred = model_0(x_val)
-    val_loss = loss_fn(y_val_pred, y_val)
+    y_val_logits = model_0(x_val)
+    val_loss = loss_fn(y_val_logits, y_val)
   
   epochs.append(epoch)
   train_losses.append(loss.item())
@@ -117,11 +121,11 @@ plt.legend()
 plt.show()
 
 with torch.inference_mode():
-  y_pred = model_0(x_val)
+  y_logits = model_0(x_val)
 
 plt.scatter(x_train.detach().cpu(), y_train.detach().cpu(), label="train", color="green")
 plt.scatter(x_val.cpu(), y_val.cpu(), label="validation", color="orange")
-plt.scatter(x_val.cpu(), y_pred.cpu(), label="predictions", color="blue")
+plt.scatter(x_val.cpu(), y_logits.cpu(), label="predictions", color="blue")
 plt.legend()
 plt.xlabel("x")
 plt.ylabel("y")
@@ -132,13 +136,172 @@ torch.save(model_0.state_dict(), "model_0.pth")
 model_0_loaded = LinearRegression()
 model_0_loaded.load_state_dict(torch.load("model_0.pth"))
 with torch.inference_mode():
-  y_pred = model_0_loaded(x_val)
+  y_logits = model_0_loaded(x_val)
 
 plt.scatter(x_train.detach().cpu(), y_train.detach().cpu(), label="train", color="green")
 plt.scatter(x_val.cpu(), y_val.cpu(), label="validation", color="orange")
-plt.scatter(x_val.cpu(), y_pred.cpu(), label="predictions", color="blue")
+plt.scatter(x_val.cpu(), y_logits.cpu(), label="predictions", color="blue")
 plt.legend()
 plt.xlabel("x")
 plt.ylabel("y")
 plt.show()
 ```
+
+## PyTorch Exercises 02 pytorch classification
+```{python}
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+NUM_SAMPLES = 1000
+RANDOM_SEED = 42
+X, y = make_moons(NUM_SAMPLES, noise=0.2, random_state=RANDOM_SEED)
+
+X = torch.from_numpy(X).float().to(device)
+y = torch.from_numpy(y).float().to(device)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED)
+print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
+
+plt.subplot(1, 2, 1)
+plt.scatter(X_train.cpu()[:, 0], X_train.cpu()[:, 1], c=y_train.cpu(), cmap=plt.cm.RdYlBu)
+plt.subplot(1, 2, 2)
+plt.scatter(X_test.cpu()[:, 0], X_test.cpu()[:, 1], c=y_test.cpu(), cmap=plt.cm.RdYlBu)
+plt.show()
+
+class LogisticRegression(nn.Module):
+  def __init__(self, in_features, out_features):
+    super().__init__()
+    self.sequential = nn.Sequential(
+      nn.Linear(in_features, 64),
+      nn.ReLU(),
+      nn.Linear(64, 64),
+      nn.ReLU(),
+      nn.Linear(64, out_features),
+    )
+  def forward(self, x):
+    return self.sequential(x).squeeze(-1)
+
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+model1 = LogisticRegression(2, 1).to(device)
+loss_fn = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.SGD(model1.parameters(), lr=0.01)
+
+NUM_EPOCHS = 10000
+
+epochs = []
+train_losses = []
+val_losses = []
+train_accs = []
+val_accs = []
+ 
+for epoch in range(NUM_EPOCHS):
+  model1.train()
+  
+  y_logits = model1(X_train.squeeze())
+  y_preds = torch.round(torch.sigmoid(y_logits))
+  
+  train_acc = accuracy_score(y_train.detach().cpu(), y_preds.detach().cpu())
+  train_accs.append(train_acc)
+  
+  loss = loss_fn(y_logits, y_train)
+  
+  optimizer.zero_grad()
+  
+  loss.backward()
+  
+  optimizer.step()
+  
+  model1.eval()
+  
+  with torch.inference_mode():
+    y_val_logits = model1(X_test)
+    y_preds = torch.round(torch.sigmoid(y_val_logits))
+    val_acc = accuracy_score(y_test.detach().cpu(), y_preds.detach().cpu())
+    val_accs.append(val_acc)
+    val_loss = loss_fn(y_val_logits, y_test)
+  
+  epochs.append(epoch)
+  train_losses.append(loss.item())
+  val_losses.append(val_loss.item())
+  
+  if epoch % 10 == 0:
+    print(f"epoch {epoch+1}: train loss {loss} | train acc {train_acc} |  val loss {val_loss} | val acc {val_acc}")
+
+plot_decision_boundary(model1, X_train, y_train)
+plt.show()
+
+def tanh(x):
+  return (torch.exp(x) - torch.exp(-x)) / (torch.exp(x) + torch.exp(-x))
+
+# Multiclass classification for spiral dataset from CS231n
+POINTS_PER_CLASS = 100
+DIMENSIONALITY = 2
+NUM_CLASSES = 3
+X = torch.zeros(POINTS_PER_CLASS * NUM_CLASSES, DIMENSIONALITY)
+y = torch.zeros(POINTS_PER_CLASS * NUM_CLASSES, dtype=torch.long)
+
+for class_number in range(NUM_CLASSES):
+  ix = range(POINTS_PER_CLASS * class_number, POINTS_PER_CLASS * (class_number + 1))
+  r = torch.linspace(0.0, 1, POINTS_PER_CLASS)
+  t = torch.linspace(class_number * 4, (class_number + 1) * 4, POINTS_PER_CLASS) + torch.randn(POINTS_PER_CLASS) * 0.2
+  X[ix] = torch.stack([r * torch.cos(t), r * torch.sin(t)], dim=1)
+  y[ix] = class_number
+
+plt.scatter(X[:, 0], X[:, 1], c=y, s=40, cmap=plt.cm.Spectral)
+plt.show()
+
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+model2 = LogisticRegression(DIMENSIONALITY, NUM_CLASSES).to(device)
+loss_fn = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model2.parameters(), lr=0.01)
+
+X = X.to(device)
+y = y.to(device)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+NUM_EPOCHS = 1000
+
+epochs = []
+train_losses = []
+val_losses = []
+train_accs = []
+val_accs = []
+
+for epoch in range(NUM_EPOCHS):
+  model2.train()
+  
+  y_logits = model2(X_train)
+  y_preds = torch.argmax(y_logits, dim=1)
+  
+  train_acc = accuracy_score(y_train.detach().cpu(), y_preds.detach().cpu())
+  train_accs.append(train_acc)
+  
+  loss = loss_fn(y_logits, y_train)
+  
+  optimizer.zero_grad()
+  
+  loss.backward()
+  
+  optimizer.step()
+  
+  model2.eval()
+  
+  with torch.inference_mode():
+    y_val_logits = model2(X_test)
+    y_val_preds = torch.argmax(y_val_logits, dim=1)
+    val_acc = accuracy_score(y_test.detach().cpu(), y_val_preds.detach().cpu())
+    val_accs.append(val_acc)
+    val_loss = loss_fn(y_val_logits, y_test)
+  
+  epochs.append(epoch)
+  train_losses.append(loss.item())
+  val_losses.append(val_loss.item())
+  
+  if epoch % 10 == 0:
+    print(f"epoch {epoch+1}: train loss {loss} | train acc {train_acc} |  val loss {val_loss} | val acc {val_acc}")
+
+plot_decision_boundary(model2, X_train, y_train)
+plt.show()
+```
+
